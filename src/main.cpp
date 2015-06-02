@@ -48,6 +48,7 @@ static struct option long_options[] =
 };
 
 
+static void example_DirectFBWrite();
 
 int main(int argc, char * const argv[])
 {
@@ -151,7 +152,7 @@ int main(int argc, char * const argv[])
 		rpc.poll(200);
 #endif // 0
 
-#if 1
+#if 1 // scripting
 
 	// initialize scripting subsystem
 	if(scripting.prepare())
@@ -160,7 +161,12 @@ int main(int argc, char * const argv[])
 		scripting.start();
 	}
 
-#else
+#else // scripting
+#if 1 // direct framebuffer write C++ example
+
+	example_DirectFBWrite();
+
+#else // other C++ examples
 	int16_t x, y;
 	uint8_t bn=255, bstep = 256 / matrix.height;
 	
@@ -209,6 +215,7 @@ int main(int argc, char * const argv[])
 		matrix.drawString((matrix.width / 2) +4, matrix.height - 12, rgb24(0,0,0), text);
 	}
 #endif // 0
+#endif // other C++ examples
 	
 	return 0;
 }
@@ -251,7 +258,7 @@ int64_t clock_getnstime(clockid_t clk_id)
 	return ((int64_t)ts.tv_sec * 1000000000LL) + (int64_t)ts.tv_nsec;
 }
 
-static double getFramerate()
+bool getFramerate(double &fps)
 {
 	static int64_t	lastTime	= clock_getnstime(CLOCK_MONOTONIC);
 	static int64_t	calls		= 0;
@@ -267,8 +274,18 @@ static double getFramerate()
 		rate	 = (double)calls * (diff / 1000000000.0);
 		calls	 = 0;
 		lastTime = now;
+		fps		 = rate;
+		
+		return true;
 	}
 
+	fps = rate;
+	return false;
+}
+double getFramerate()
+{
+	double rate;
+	getFramerate(rate);
 	return rate;
 }
 
@@ -346,3 +363,104 @@ size_t strchrcount(const char *str, char chr, size_t *strlen)
 
 	return count;
 }
+
+
+/**
+ * Direct framebuffer write example, instead of using Matrix draw commands.
+ * XtremePanel equivalent to fadecandy's.
+ */
+static void example_DirectFBWrite()
+{
+	// new framebuffer has been displayed
+	rgb24	color;
+	int16_t	i;
+	static	uint8_t wheelPos=128;
+//	colorWheel(color, ++wheelPos);
+
+	const size_t FBsize   = matrix.width * matrix.height;
+	const size_t TXStride = RPCDATA_SIZE -1;
+		  size_t FBpacks  = (FBsize*3) / TXStride;
+
+	if((FBsize*3) % TXStride)
+		++FBpacks;
+
+	// allocate local framebuffer
+	rgb24 *framebuffer = new rgb24[FBpacks * (TXStride / 3)];
+
+
+	// stop GIF playback, stop text scrollers, etc..
+	matrix.gifStop();
+	matrix.getScroller(0).stopScrollText();
+	matrix.getScroller(1).stopScrollText();
+	matrix.fillScreen(rgb24(0, 0, 0));
+	matrix.waitForVSync();
+
+
+	// main loop
+	while(!gm_Exit && rpc.ok())
+	{
+		double fps;
+		if(getFramerate(fps))
+		{
+			// report current frame rate every second
+			printf("\rFrame update rate %0.3f", fps);
+			fflush(stdout);
+		}
+		
+#if 1
+		// colorwheel in smooth moving columns
+		wheelPos += 8;
+		uint8_t cw = wheelPos;
+		for(int16_t x=0; x<matrix.width; x++)
+		{
+			cw += 4;
+			colorWheel(color, cw);
+			for(int16_t y=0; y<matrix.height; y++)
+			{
+				framebuffer[(matrix.width * y) + x] = color;
+			}
+		}
+#else
+		colorWheel(color, ++wheelPos);
+		// fill entire display with colorwheel value
+		for(int16_t x=0; i<FBsize; i++)
+			framebuffer[x] = color;
+#endif
+
+		// make border outline white
+		color = {255, 255, 255};
+		for(i=0; i<matrix.width; i++)
+		{
+			// top and bottom rows
+			framebuffer[i] = color;
+			framebuffer[matrix.width * (matrix.height -1) +i] = color;
+		}
+		for(i=0; i<matrix.height; i++)
+		{
+			// left and right columns
+			framebuffer[(matrix.width * i)] = color;
+			framebuffer[(matrix.width * i) + (matrix.width -1)] = color;
+		}
+
+		uint8_t *data = (uint8_t *)framebuffer;
+
+		// transfer framebuffer
+		for(size_t i=0; i<FBpacks; i++)
+		{
+			uint8_t flags = 0;
+			if(i > 0)
+				flags |= 0x10;	// append flag
+			if(i+1 == FBpacks)
+				flags |= 0x20;	// swapBuffers flag
+//			flags |= 0x80;		// raster debug visual aid enable flag, unique colors per raster segment(21 pixels) draw
+			rpc.sendTypeFrame(flags, &data[i * TXStride], TXStride);
+		}
+
+		// frame swap detection (vertical synchronization), different from matrix.waitForVSync() cause of direct framebuffer writing done above
+		size_t fbswaps = matrix.bufferswaps;
+		while(!gm_Exit && rpc.poll(5) && rpc.ok() && (fbswaps == matrix.bufferswaps));
+	}
+
+	delete[] framebuffer;
+}
+

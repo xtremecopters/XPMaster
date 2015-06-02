@@ -260,6 +260,8 @@ public:
 	  inline bool send(rpcType type, T1 cmd, const T2 *data, size_t size, bool clean = false, const T3 *data2 = NULL, size_t size2 = 0)
 	  { return send(type, (uint8_t)cmd, (const uint8_t *)data, size, clean, (const uint8_t *)data2, size2); }
 
+	bool sendTypeFrame(uint8_t flags, const uint8_t *data, size_t size);
+
 	bool transfer(uint8_t slot, const uint8_t *src, size_t size);
 
 	int  poll(unsigned int timeout = 50);

@@ -73,6 +73,30 @@ bool XpmRPC::send(rpcType type, uint8_t cmd, const uint8_t *data, size_t size, b
 	return true;
 }
 
+bool XpmRPC::sendTypeFrame(uint8_t flags, const uint8_t *data, size_t size)
+{
+	// reject over max payload size
+	if(size > (RPCDATA_SIZE -1))
+		return false;
+
+	// set command byte
+	rpcDataTX[0] = (uint8_t)rpcType::Framebuffer | flags;
+
+	// store passed data to transmit buffer
+	if(size)
+		memcpy(&rpcDataTX[1], data, size);
+
+	if(!mDevice.write(rpcDataTX, sizeof(rpcDataTX)))
+	{
+//		printf("device I/O error: (%d) %s\n", errno, strerror(errno));
+		mOK = false;
+		return false;
+	}
+
+	// success
+	return true;
+}
+
 bool XpmRPC::transfer(uint8_t slot, const uint8_t *src, size_t size)
 {
 	tRPCXfer xfer;
